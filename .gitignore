@@ -54,6 +54,9 @@ graphify-out/
 scripts/agent-eval/out/
 *-snapshot.md
 
+# Personal study notes and local debug helpers (never commit; contains host IPs and load-test data)
+/学习笔记/
+
 # OS files
 Thumbs.db
 desktop.ini
