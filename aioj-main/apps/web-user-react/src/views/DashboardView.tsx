@@ -2,7 +2,7 @@ import * as React from "react";
 import { Link } from "@tanstack/react-router";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowRight, Bot, CheckCircle2, ListChecks, Send } from "lucide-react";
-import { api, type EntityId, type SubmissionResponse } from "@aioj/api-client";
+import { api, type SubmissionResponse } from "@aioj/api-client";
 import { Badge, Button, Card, CardBody, cn } from "@aioj/ui-react";
 import { EmptyState, ErrorPanel, PageSection, SkeletonBlock } from "../components/Common";
 import { useAuth } from "../lib/auth";
@@ -15,9 +15,11 @@ export function DashboardView() {
   const { profile } = useAuth();
   const problemsQuery = useQuery({queryKey: ["problems", "dashboard"],queryFn: () => api.problems({ page: 1, pageSize: 20 })});
   const submissionsQuery = useQuery({ queryKey: ["submissions", "mine", "dashboard"], queryFn: () => api.mySubmissions({ page: 1, pageSize: 8 }) });
-  const usageQuery = useQuery({ queryKey: ["ai", "usage"], queryFn: () => api.usage(), retry: 0 });
-  const studentState = useStudentState();                     // ← 新增这一行
-
+  const usageQuery = useQuery({ queryKey: ["ai", "usage"], queryFn: () => api.usage(), retry: 0});
+  const recommendationsQuery = useQuery({
+  queryKey: ["tutor", "recommendations", "dashboard"],
+  queryFn: () => api.tutorRecommendations({ limit: 6 })
+  });
   const submissions = submissionsQuery.data?.records ?? [];
   const acceptedQuery = useQuery({                            // ← 新增：真实的"已通过"总数
     queryKey: ["submissions", "mine", "accepted-count"],
@@ -25,50 +27,7 @@ export function DashboardView() {
   });
   const latest = submissions[0];
   const aiUsage = usageQuery.data ? normalizeAiUsage(usageQuery.data) : null;
-  const recommendedProblems = React.useMemo(() => {
-  const records = problemsQuery.data?.records ?? [];
-  //记录薄弱标签的优先级；
-  const weakTagRank = new Map(
-    studentState.weakTags.map((tag, index) => [tag, index])
-  );
-  //简单题优先于中等题，中等题优先于困难题
-  const difficultyRank: Record<string, number> = {
-    EASY: 0,
-    MEDIUM: 1,
-    HARD: 2,
-    CHALLENGE: 3
-  };
-
-  return records
-    //删除已经 AC 的题
-    .filter((problem) => !studentState.acceptedProblemIds.has(problem.id))
-    .map((problem, index) => {
-      //weakRank 越小，说明越符合最近失败的知识点
-      const weakRank = problem.tags.reduce(
-        (best, tag) => Math.min(best, weakTagRank.get(tag) ?? Number.MAX_SAFE_INTEGER),
-        Number.MAX_SAFE_INTEGER
-      );
-
-      return {
-        problem,
-        weakRank,
-        difficultyRank: difficultyRank[problem.difficulty] ?? 99,
-        index
-      };
-    })
-    .sort((a, b) =>
-      a.weakRank - b.weakRank
-      || a.difficultyRank - b.difficultyRank
-      || a.index - b.index
-    )
-    .slice(0, 6)//最后只展示 6 道。
-    .map(({ problem }) => problem);
-}, [
-  problemsQuery.data?.records,
-  studentState.acceptedProblemIds,
-  studentState.weakTags
-]);
-
+  const recommendations = recommendationsQuery.data ?? [];
   return (
     <div className="mx-auto flex max-w-[1500px] flex-col gap-6 px-4 py-5 md:px-8">
       <PageSection
@@ -111,30 +70,52 @@ export function DashboardView() {
             </Button>
           </div>
           <div className="divide-y divide-[var(--oj-border-soft)]">
-            {problemsQuery.isLoading ? Array.from({ length: 4 }).map((_, index) => (
-              <div key={index} className="p-4"><SkeletonBlock className="h-14" /></div>
-            )) : problemsQuery.isError ? (
-              <div className="p-5"><ErrorPanel title={t("problems.loadFailed")} /></div>
-            ) : recommendedProblems.length ? recommendedProblems.map((problem) => (
+            {recommendationsQuery.isLoading ? Array.from({ length: 4 }).map((_, index) => (
+              <div key={index} className="p-4">
+                <SkeletonBlock className="h-14" />
+              </div>
+            )) : recommendationsQuery.isError ? (
+              <div className="p-5">
+                <ErrorPanel title={t("problems.loadFailed")} />
+              </div>
+            ) : recommendations.length ? recommendations.map(({ problem, reason }) => (
               <Link
-                key={problem.id}
+                key={problem.problemId}
                 to="/problems/$problemId"
-                params={{ problemId: problem.id }}
+                params={{ problemId: problem.problemId }}
                 className="block px-5 py-4 outline-none transition-colors hover:bg-[var(--oj-surface-muted)] focus-visible:ring-2 focus-visible:ring-[var(--oj-focus)]"
               >
                 <div className="flex flex-wrap items-center justify-between gap-3">
                   <div className="min-w-0">
-                    <h3 className="truncate text-sm font-semibold text-[var(--oj-ink)]">{problem.title}</h3>
+                    <h3 className="truncate text-sm font-semibold text-[var(--oj-ink)]">
+                      {problem.title}
+                    </h3>
+
+                    <p className="mt-1 text-xs text-[var(--oj-ink-muted)]">
+                      {reason}
+                    </p>
+
                     <div className="mt-2 flex flex-wrap gap-2">
-                      <Badge tone={difficultyTone(problem.difficulty)}>{t(`difficulty.${problem.difficulty}`)}</Badge>
-                      {problem.tags.slice(0, 3).map((tag) => <Badge key={tag}>{tag}</Badge>)}
+                      <Badge tone={difficultyTone(problem.difficulty)}>
+                        {t(`difficulty.${problem.difficulty}`)}
+                      </Badge>
+
+                      {problem.tags.slice(0, 3).map((tag) => (
+                        <Badge key={tag}>{tag}</Badge>
+                      ))}
                     </div>
                   </div>
-                  <span className="text-sm font-medium text-[var(--oj-primary)]">{t("dashboard.practice")}</span>
+
+                  <span className="text-sm font-medium text-[var(--oj-primary)]">
+                    {t("dashboard.practice")}
+                  </span>
                 </div>
               </Link>
             )) : (
-              <EmptyState title={t("dashboard.noRecommendedTitle")} description={t("dashboard.noRecommendedDesc")} />
+              <EmptyState
+                title={t("dashboard.noRecommendedTitle")}
+                description={t("dashboard.noRecommendedDesc")}
+              />
             )}
           </div>
         </div>
@@ -235,97 +216,4 @@ function UsageRow({ label, used, total }: { label: string; used: number; total: 
       </div>
     </div>
   );
-}
-type StudentState = {
-  acceptedProblemIds: Set<EntityId>;
-  weakTags: string[];
-  /** 题目 ID -> 该题标签，供后续排序时快速查询 */
-  failedProblemTags: Map<EntityId, string[]>;
-  ready: boolean;
-};
-
-/**
- * 从"我的提交"里推出首页推荐需要的信号：
- * 1. 已经 AC 过的题目集合（用于排除，避免重复推荐）
- * 2. 最近失败过的题目的标签（用于"弱项优先"）
- */
-function useStudentState(): StudentState {
-  const submissionsQuery = useQuery({
-    queryKey: ["submissions", "mine", "recommendation-signals"],
-    queryFn: () => api.mySubmissions({ page: 1, pageSize: 100, mine: true })
-  });
-
-  const submissions = submissionsQuery.data?.records ?? [];
-
-  // 第一步：按"最近优先"扫一遍提交，分出两类
-  const acceptedProblemIds = React.useMemo(() => {
-    const ids = new Set<EntityId>();
-    submissions.forEach((submission) => {
-      if (submission.status === "ACCEPTED") {
-        ids.add(submission.problemId);
-      }
-    });
-    return ids;
-  }, [submissions]);
-
-  // 失败的题：problemId -> 最后一次失败排在第几位（数字越小 = 越近）
-  const failedProblemOrder = React.useMemo(() => {
-    const order = new Map<EntityId, number>();
-    submissions.forEach((submission, index) => {
-      if (submission.status === "ACCEPTED") return;
-      // 编译错误 / 系统错误不算"知识点薄弱"
-      if (submission.status === "COMPILE_ERROR" || submission.status === "SYSTEM_ERROR") return;
-      if (!order.has(submission.problemId)) {
-        order.set(submission.problemId, index);
-      }
-    });
-    return order;
-  }, [submissions]);
-
-  // 第二步：拿失败的题目 ID 去换回"标签"
-  const failedProblemIds = React.useMemo(
-    () => Array.from(failedProblemOrder.keys()).slice(0, 6),
-    [failedProblemOrder]
-  );
-
-  const failedProblemsQuery = useQuery({
-    queryKey: ["problems", "failed-by-me", failedProblemIds],
-    enabled: failedProblemIds.length > 0,
-    queryFn: () => Promise.all(failedProblemIds.map((id) => api.problem(id)))
-  });
-
-  const failedProblemTags = React.useMemo(() => {
-    const map = new Map<EntityId, string[]>();
-    (failedProblemsQuery.data ?? []).forEach((problem) => {
-      map.set(problem.id, problem.tags ?? []);
-    });
-    return map;
-  }, [failedProblemsQuery.data]);
-
-  // 第三步：把"标签"汇总成薄弱标签榜（最近失败过的排前面）
-  const weakTags = React.useMemo(() => {
-    const bestOrderByTag = new Map<string, number>();
-    failedProblemIds.forEach((problemId) => {
-      const order = failedProblemOrder.get(problemId);
-      const tags = failedProblemTags.get(problemId);
-      if (order === undefined || !tags) return;
-      tags.forEach((tag) => {
-        const current = bestOrderByTag.get(tag);
-        if (current === undefined || order < current) {
-          bestOrderByTag.set(tag, order);
-        }
-      });
-    });
-    return Array.from(bestOrderByTag.entries())
-      .sort((a, b) => a[1] - b[1])
-      .map(([tag]) => tag)
-      .slice(0, 5);
-  }, [failedProblemIds, failedProblemTags, failedProblemOrder]);
-
-  return {
-    acceptedProblemIds,
-    weakTags,
-    failedProblemTags,
-    ready: failedProblemsQuery.isSuccess && weakTags.length > 0
-  };
 }

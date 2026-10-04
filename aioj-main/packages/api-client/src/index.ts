@@ -542,6 +542,27 @@ export interface ContestProblemResponse {
   updatedAt: string;
 }
 
+export interface TutorProblemResponse {
+  problemId: EntityId;
+  version: string;
+  updatedAt?: string | null;
+  solveUrl: string;
+  title: string;
+  difficulty: Difficulty;
+  statement: string;
+  notes?: string | null;
+  tags: string[];
+  samples: TestCaseDto[];
+  timeLimitMillis: number;
+  memoryLimitKb: number;
+}
+
+export interface TutorRecommendationResponse {
+  problem: TutorProblemResponse;
+  score: number;
+  reason: string;
+}
+
 export interface ContestParticipantResponse {
   id: EntityId;
   contestId: EntityId;
@@ -3510,7 +3531,10 @@ export const api = {
       method: 'PATCH',
       body: JSON.stringify(payload)
     }),
-
+  tutorRecommendations: (params: { limit?: number } = {}) =>
+    request<TutorRecommendationResponse[]>(
+      `/api/v1/tutor/recommendations${queryString(params)}`
+    ),
   problems: (params: ProblemListParams = {}) =>
     request<PageResponse<ProblemResponse>>(`/api/v1/problems${queryString({ page: 1, pageSize: 20, ...params })}`),
   problem: (id: EntityId, context: { contestRunId?: EntityId | null; contestProblemId?: EntityId | null; staffView?: boolean } = {}) =>
