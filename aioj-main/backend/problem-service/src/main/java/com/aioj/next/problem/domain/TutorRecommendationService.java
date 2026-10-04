@@ -77,20 +77,51 @@ public class TutorRecommendationService {
                 .isNull(ProblemEntity::getDeletedAt)
                 .isNull(ProblemEntity::getArchivedAt)
                 .eq(ProblemEntity::getVisibility, com.aioj.next.contract.problem.ProblemVisibility.PUBLIC));
+        Map<String, Integer> weakTagScores = new HashMap<>();
+
+        for (ProblemEntity problem : publicProblems) {
+            ProblemHistory item = history.get(problem.getId());
+            if (item == null || item.accepted || item.failureCount == 0) {
+                continue;
+            }
+
+            for (String tag : problemCatalog.tagsOf(problem)) {
+                if (tag == null || tag.isBlank()) {
+                    continue;
+                }
+                weakTagScores.merge(tag.trim(), item.failureCount, Integer::sum);
+            }
+        }
         List<ScoredProblem> ranked = new ArrayList<>();
         for (ProblemEntity problem : publicProblems) {
             ProblemHistory item = history.get(problem.getId());
             if (item != null && item.accepted) {
                 continue;
             }
-            double score = item == null
+            List<String> matchingTags = problemCatalog.tagsOf(problem).stream()
+                .map(String::trim)
+                .filter(tag -> !tag.isEmpty())
+                .filter(weakTagScores::containsKey)
+                .toList();
+
+            int tagScore = matchingTags.stream()
+                    .mapToInt(tag -> Math.min(weakTagScores.get(tag), 5))
+                    .sum() * 10;
+
+            double score = (item == null
                     ? 100.0
                     : 70.0
                             - Math.min(item.attempts, 10) * 3.0
-                            + Math.min(item.failureCount, 5) * 2.0;
-            String reason = item == null
-                    ? "尚未提交过，适合作为新的练习题"
-                    : "曾提交但尚未通过，适合针对性复习";
+                            + Math.min(item.failureCount, 5) * 2.0)
+                    + tagScore;
+            String reason;
+            if (item != null && item.failureCount > 0) {
+                reason = "曾提交但尚未通过，适合针对性复习";
+            } else if (!matchingTags.isEmpty()) {
+                reason = "你最近在「" + matchingTags.get(0) + "」知识点上有未通过记录";
+            } else {
+                reason = "尚未提交过，适合作为新的练习题";
+            }
             ranked.add(new ScoredProblem(problem, score, reason));
         }
         ranked.sort(Comparator.comparingDouble(ScoredProblem::score).reversed()

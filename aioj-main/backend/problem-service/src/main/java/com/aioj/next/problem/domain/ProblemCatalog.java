@@ -544,6 +544,10 @@ public class ProblemCatalog {
                 response.tags(), response.samples(), response.timeLimitMillis(), response.memoryLimitKb());
     }
 
+    public List<String> tagsOf(ProblemEntity problem) {
+        return fromJson(problem.getTags());
+    }
+
     private String solveUrl(Long problemId) {
         String baseUrl = aiojUserBaseUrl == null ? "http://localhost:5175" : aiojUserBaseUrl.trim();
         while (baseUrl.endsWith("/")) {

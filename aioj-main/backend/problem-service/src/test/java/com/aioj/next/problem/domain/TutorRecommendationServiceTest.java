@@ -39,6 +39,7 @@ class TutorRecommendationServiceTest {
 
     @BeforeEach
     void setUp() {
+        when(problemCatalog.tagsOf(any())).thenReturn(List.of());
         service = new TutorRecommendationService(problemMapper, submissionMapper, problemCatalog);
         SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
                 new SecurityPrincipal(42L, "student", Set.of(Role.STUDENT)), "n/a"));
@@ -76,6 +77,34 @@ class TutorRecommendationServiceTest {
 
         assertEquals(1, result.size());
         assertEquals("曾提交但尚未通过，适合针对性复习", result.get(0).reason());
+    }
+
+    @Test
+    void prioritizesProblemsSharingTagsWithFailureHistory() {
+        ProblemEntity failed = problem(3L, "Failed BFS");
+        failed.setTags("[\"BFS\"]");
+
+        ProblemEntity related = problem(4L, "Related BFS");
+        related.setTags("[\"BFS\"]");
+
+        ProblemEntity unrelated = problem(5L, "Unrelated DP");
+        unrelated.setTags("[\"DP\"]");
+
+        when(submissionMapper.selectList(any()))
+                .thenReturn(List.of(submission(3L, 42L, SubmissionStatus.WRONG_ANSWER)));
+
+        when(problemMapper.selectList(any()))
+                .thenReturn(List.of(failed, related, unrelated));
+
+        when(problemCatalog.tagsOf(failed)).thenReturn(List.of("BFS"));
+        when(problemCatalog.tagsOf(related)).thenReturn(List.of("BFS"));
+        when(problemCatalog.tagsOf(unrelated)).thenReturn(List.of("DP"));
+        when(problemCatalog.toTutorResponse(related)).thenReturn(tutorProblem(4L));
+
+        var result = service.recommend(1);
+
+        assertEquals(1, result.size());
+        assertEquals(4L, result.get(0).problem().problemId());
     }
 
     private ProblemEntity problem(Long id, String title) {
