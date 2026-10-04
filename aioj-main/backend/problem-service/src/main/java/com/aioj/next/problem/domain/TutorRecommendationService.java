@@ -12,11 +12,9 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
-import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -25,6 +23,13 @@ import java.util.Set;
 public class TutorRecommendationService {
     private static final int DEFAULT_LIMIT = 10;
     private static final int MAX_LIMIT = 50;
+    private static final Set<SubmissionStatus> KNOWLEDGE_FAILURE_STATUSES = Set.of(
+        SubmissionStatus.WRONG_ANSWER,
+        SubmissionStatus.RUNTIME_ERROR,
+        SubmissionStatus.TIME_LIMIT_EXCEEDED,
+        SubmissionStatus.MEMORY_LIMIT_EXCEEDED,
+        SubmissionStatus.OUTPUT_LIMIT_EXCEEDED
+);
 
     private final ProblemMapper problemMapper;
     private final SubmissionMapper submissionMapper;
@@ -43,6 +48,8 @@ public class TutorRecommendationService {
         List<SubmissionEntity> submissions = submissionMapper.selectList(new LambdaQueryWrapper<SubmissionEntity>()
                 .eq(SubmissionEntity::getUserId, userId)
                 .isNull(SubmissionEntity::getContestId)
+                .isNull(SubmissionEntity::getContestRunId)
+                .isNull(SubmissionEntity::getContestProblemId)
                 .orderByDesc(SubmissionEntity::getCreatedAt)
                 .orderByDesc(SubmissionEntity::getId));
 
@@ -53,10 +60,15 @@ public class TutorRecommendationService {
             }
             ProblemHistory current = history.computeIfAbsent(submission.getProblemId(), ignored -> new ProblemHistory());
             current.attempts++;
-            if (submission.getStatus() == SubmissionStatus.ACCEPTED) {
+
+            SubmissionStatus status = submission.getStatus();
+            if (status == SubmissionStatus.ACCEPTED) {
                 current.accepted = true;
-            } else if (current.firstFailure == null && submission.getStatus() != null) {
-                current.firstFailure = submission.getStatus();
+            } else if (status != null && KNOWLEDGE_FAILURE_STATUSES.contains(status)) {
+                current.failureCount++;
+                if (current.firstFailure == null) {
+                    current.firstFailure = status;
+                }
             }
         }
 
@@ -71,7 +83,11 @@ public class TutorRecommendationService {
             if (item != null && item.accepted) {
                 continue;
             }
-            double score = item == null ? 100.0 : 70.0 - Math.min(item.attempts, 10) * 3.0;
+            double score = item == null
+                    ? 100.0
+                    : 70.0
+                            - Math.min(item.attempts, 10) * 3.0
+                            + Math.min(item.failureCount, 5) * 2.0;
             String reason = item == null
                     ? "尚未提交过，适合作为新的练习题"
                     : "曾提交但尚未通过，适合针对性复习";
@@ -95,6 +111,7 @@ public class TutorRecommendationService {
 
     private static final class ProblemHistory {
         private int attempts;
+        private int failureCount;
         private boolean accepted;
         private SubmissionStatus firstFailure;
     }
