@@ -2,6 +2,7 @@ package com.aioj.next.problem.domain;
 
 import com.aioj.next.common.security.Role;
 import com.aioj.next.common.security.SecurityPrincipal;
+import com.aioj.next.contract.problem.Difficulty;
 import com.aioj.next.contract.problem.ProblemVisibility;
 import com.aioj.next.contract.problem.TutorProblemResponse;
 import com.aioj.next.contract.submission.SubmissionStatus;
@@ -105,6 +106,67 @@ class TutorRecommendationServiceTest {
 
         assertEquals(1, result.size());
         assertEquals(4L, result.get(0).problem().problemId());
+    }
+
+    @Test
+    void coldStartUsesDifficultyGradient() {
+        ProblemEntity easy1 = problem(1L, "Easy 1");
+        easy1.setDifficulty(Difficulty.EASY);
+
+        ProblemEntity medium1 = problem(2L, "Medium 1");
+        medium1.setDifficulty(Difficulty.MEDIUM);
+
+        ProblemEntity easy2 = problem(3L, "Easy 2");
+        easy2.setDifficulty(Difficulty.EASY);
+
+        ProblemEntity medium2 = problem(4L, "Medium 2");
+        medium2.setDifficulty(Difficulty.MEDIUM);
+
+        ProblemEntity hard = problem(5L, "Hard");
+        hard.setDifficulty(Difficulty.HARD);
+
+        ProblemEntity challenge = problem(6L, "Challenge");
+        challenge.setDifficulty(Difficulty.CHALLENGE);
+
+        when(submissionMapper.selectList(any())).thenReturn(List.of());
+        when(problemMapper.selectList(any()))
+                .thenReturn(List.of(easy1, medium1, easy2, medium2, hard, challenge));
+
+        when(problemCatalog.toTutorResponse(any())).thenAnswer(invocation ->
+                tutorProblem((ProblemEntity) invocation.getArgument(0)));
+
+        var result = service.recommend(6);
+
+        assertEquals(
+                List.of(
+                        Difficulty.EASY,
+                        Difficulty.MEDIUM,
+                        Difficulty.EASY,
+                        Difficulty.MEDIUM,
+                        Difficulty.HARD,
+                        Difficulty.CHALLENGE
+                ),
+                result.stream()
+                        .map(item -> item.problem().difficulty())
+                        .toList()
+        );
+    }
+
+    private TutorProblemResponse tutorProblem(ProblemEntity problem) {
+        return new TutorProblemResponse(
+                problem.getId(),
+                "v1",
+                null,
+                "http://localhost:5175/problems/" + problem.getId(),
+                problem.getTitle(),
+                problem.getDifficulty(),
+                "statement",
+                null,
+                List.of(),
+                List.of(),
+                1000,
+                262144
+        );
     }
 
     private ProblemEntity problem(Long id, String title) {

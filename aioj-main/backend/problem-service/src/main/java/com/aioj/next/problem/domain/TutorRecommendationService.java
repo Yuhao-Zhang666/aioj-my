@@ -1,4 +1,5 @@
 package com.aioj.next.problem.domain;
+import com.aioj.next.contract.problem.Difficulty;
 
 import com.aioj.next.common.security.SecuritySupport;
 import com.aioj.next.contract.problem.TutorProblemResponse;
@@ -10,6 +11,8 @@ import com.aioj.next.problem.persistence.mapper.ProblemMapper;
 import com.aioj.next.problem.persistence.mapper.SubmissionMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.springframework.stereotype.Service;
+import com.aioj.next.contract.problem.Difficulty;
+import java.util.HashSet;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -127,10 +130,58 @@ public class TutorRecommendationService {
         ranked.sort(Comparator.comparingDouble(ScoredProblem::score).reversed()
                 .thenComparing(item -> item.problem().getCreatedAt(), Comparator.nullsLast(Comparator.reverseOrder()))
                 .thenComparing(item -> item.problem().getId(), Comparator.nullsLast(Comparator.reverseOrder())));
-        return ranked.stream().limit(limit).map(item -> new TutorRecommendationResponse(
+        List<ScoredProblem> selected = history.isEmpty()
+                ? selectColdStart(ranked, limit)
+                : ranked.stream().limit(limit).toList();
+        return selected.stream().map(item -> new TutorRecommendationResponse(
                 problemCatalog.toTutorResponse(item.problem()),
                 BigDecimal.valueOf(item.score()).setScale(2, java.math.RoundingMode.HALF_UP),
                 item.reason())).toList();
+    }
+
+    private List<ScoredProblem> selectColdStart(List<ScoredProblem> ranked, int limit) {
+        List<Difficulty> preferredDifficulties = List.of(
+                Difficulty.EASY,
+                Difficulty.MEDIUM,
+                Difficulty.EASY,
+                Difficulty.MEDIUM,
+                Difficulty.HARD,
+                Difficulty.CHALLENGE
+        );
+
+        List<ScoredProblem> selected = new ArrayList<>();
+        Set<Long> selectedIds = new HashSet<>();
+
+        for (Difficulty target : preferredDifficulties) {
+            if (selected.size() >= limit) {
+                break;
+            }
+
+            for (ScoredProblem candidate : ranked) {
+                if (selectedIds.contains(candidate.problem().getId())) {
+                    continue;
+                }
+                if (candidate.problem().getDifficulty() != target) {
+                    continue;
+                }
+
+                selected.add(candidate);
+                selectedIds.add(candidate.problem().getId());
+                break;
+            }
+        }
+
+        // 某种难度题目不足时，用剩余公开题补齐
+        for (ScoredProblem candidate : ranked) {
+            if (selected.size() >= limit) {
+                break;
+            }
+            if (selectedIds.add(candidate.problem().getId())) {
+                selected.add(candidate);
+            }
+        }
+
+        return selected;
     }
 
     private int normalizeLimit(Integer requestedLimit) {
