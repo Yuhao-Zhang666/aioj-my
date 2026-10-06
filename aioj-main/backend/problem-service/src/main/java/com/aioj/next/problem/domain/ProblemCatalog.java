@@ -104,7 +104,13 @@ public class ProblemCatalog {
             query.and(nested -> nested
                     .like(ProblemEntity::getTitle, normalizedKeyword)
                     .or()
-                    .apply("CAST(id AS CHAR) LIKE {0}", numericLike));
+                    .apply("CAST(id AS CHAR) LIKE {0}", numericLike)
+                    .or()
+                    .apply(
+                            "EXISTS (SELECT 1 FROM problem_index_chunks index_chunk "
+                                    + "WHERE index_chunk.problem_id = problems.id "
+                                    + "AND index_chunk.search_text LIKE {0})",
+                            numericLike));
         }
         Page<ProblemEntity> result = problemMapper.selectPage(new Page<>(normalizePage(page), normalizePageSize(pageSize)),
                 applySort(query
@@ -130,8 +136,16 @@ public class ProblemCatalog {
                 .eq(ProblemEntity::getVisibility, ProblemVisibility.PUBLIC);
         String normalizedKeyword = keyword == null ? "" : keyword.trim();
         if (StringUtils.hasText(normalizedKeyword)) {
-            query.and(nested -> nested.like(ProblemEntity::getTitle, normalizedKeyword)
-                    .or().apply("CAST(id AS CHAR) LIKE {0}", "%" + normalizedKeyword + "%"));
+            query.and(nested -> nested
+                    .like(ProblemEntity::getTitle, normalizedKeyword)
+                    .or()
+                    .apply("CAST(id AS CHAR) LIKE {0}", "%" + normalizedKeyword + "%")
+                    .or()
+                    .apply(
+                            "EXISTS (SELECT 1 FROM problem_index_chunks index_chunk "
+                                    + "WHERE index_chunk.problem_id = problems.id "
+                                    + "AND index_chunk.search_text LIKE {0})",
+                            "%" + normalizedKeyword + "%"));
         }
         Page<ProblemEntity> result = problemMapper.selectPage(
                 new Page<>(normalizePage(page), normalizePageSize(pageSize)),
