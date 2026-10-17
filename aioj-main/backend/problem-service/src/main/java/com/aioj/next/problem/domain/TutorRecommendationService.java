@@ -116,7 +116,22 @@ public class TutorRecommendationService {
             Map.entry("simulation", "simulation"),
 
             Map.entry("排序", "sorting"),
-            Map.entry("sorting", "sorting")
+            Map.entry("sorting", "sorting"),
+
+            Map.entry("arrays", "array"),
+
+            Map.entry("deque", "deque"),
+            Map.entry("dijkstra", "dijkstra"),
+            Map.entry("gcd", "gcd"),
+            Map.entry("kmp", "kmp"),
+            Map.entry("layered_graph", "layered_graph"),
+            Map.entry("lower_bound", "lower_bound"),
+            Map.entry("misere", "misere"),
+            Map.entry("nim", "nim"),
+            Map.entry("upper_bound", "upper_bound"),
+
+            Map.entry("inversion_count", "inversion_count"),
+            Map.entry("tsp_state_compression", "tsp_state_compression")
     );
 
     private final ProblemMapper problemMapper;

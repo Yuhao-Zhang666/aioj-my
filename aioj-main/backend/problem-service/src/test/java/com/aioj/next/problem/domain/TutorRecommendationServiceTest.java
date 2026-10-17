@@ -294,6 +294,74 @@ class TutorRecommendationServiceTest {
         assertTrue(result.get(0).reason().contains("segment_tree"));
         }
 
+        @Test
+        void errorProfileMatchesInversionCount() {
+        ProblemEntity inversion = problem(12L, "Inversion Count");
+
+        when(submissionMapper.selectList(any()))
+                .thenReturn(List.of());
+
+        when(problemMapper.selectList(any()))
+                .thenReturn(List.of(inversion));
+
+        when(problemCatalog.tagsOf(inversion))
+                .thenReturn(List.of("inversion_count"));
+
+        when(profileRecommendationClient.fetch(any(), anyInt()))
+                .thenReturn(List.of(
+                        new AiRecommendationProfileSignal(
+                                "wrong_answer_inversion_count",
+                                "weakness",
+                                "NEGATIVE",
+                                0.8,
+                                2
+                        )
+                ));
+
+        when(problemCatalog.toTutorResponse(inversion))
+                .thenReturn(tutorProblem(12L));
+
+        var result = service.recommend(1);
+
+        assertEquals(1, result.size());
+        assertEquals(12L, result.get(0).problem().problemId());
+        assertTrue(result.get(0).reason().contains("inversion_count"));
+        }
+
+        @Test
+        void errorProfileMatchesTspStateCompression() {
+        ProblemEntity tsp = problem(13L, "TSP State Compression");
+
+        when(submissionMapper.selectList(any()))
+                .thenReturn(List.of());
+
+        when(problemMapper.selectList(any()))
+                .thenReturn(List.of(tsp));
+
+        when(problemCatalog.tagsOf(tsp))
+                .thenReturn(List.of("tsp_state_compression"));
+
+        when(profileRecommendationClient.fetch(any(), anyInt()))
+                .thenReturn(List.of(
+                        new AiRecommendationProfileSignal(
+                                "wrong_answer_tsp_state_compression",
+                                "weakness",
+                                "NEGATIVE",
+                                0.8,
+                                2
+                        )
+                ));
+
+        when(problemCatalog.toTutorResponse(tsp))
+                .thenReturn(tutorProblem(13L));
+
+        var result = service.recommend(1);
+
+        assertEquals(1, result.size());
+        assertEquals(13L, result.get(0).problem().problemId());
+        assertTrue(result.get(0).reason().contains("tsp_state_compression"));
+        }
+
     @Test
     void coldStartUsesDifficultyGradient() {
         ProblemEntity easy1 = problem(1L, "Easy 1");
