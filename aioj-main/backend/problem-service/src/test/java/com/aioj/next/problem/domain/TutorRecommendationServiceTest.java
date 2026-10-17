@@ -10,6 +10,7 @@ import com.aioj.next.problem.persistence.entity.ProblemEntity;
 import com.aioj.next.problem.persistence.entity.SubmissionEntity;
 import com.aioj.next.problem.persistence.mapper.ProblemMapper;
 import com.aioj.next.problem.persistence.mapper.SubmissionMapper;
+import com.aioj.next.contract.ai.AiRecommendationProfileSignal;
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -24,8 +25,10 @@ import java.util.List;
 import java.util.Set;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.when;
+import static org.mockito.ArgumentMatchers.anyInt;
 
 @ExtendWith(MockitoExtension.class)
 class TutorRecommendationServiceTest {
@@ -35,13 +38,23 @@ class TutorRecommendationServiceTest {
     private SubmissionMapper submissionMapper;
     @Mock
     private ProblemCatalog problemCatalog;
+    @Mock
+    private AiProfileRecommendationClient profileRecommendationClient;
 
     private TutorRecommendationService service;
 
     @BeforeEach
     void setUp() {
         when(problemCatalog.tagsOf(any())).thenReturn(List.of());
-        service = new TutorRecommendationService(problemMapper, submissionMapper, problemCatalog);
+        when(profileRecommendationClient.fetch(any(), anyInt()))
+                .thenReturn(List.of());
+
+        service = new TutorRecommendationService(
+                problemMapper,
+                submissionMapper,
+                problemCatalog,
+                profileRecommendationClient
+        );
         SecurityContextHolder.getContext().setAuthentication(new UsernamePasswordAuthenticationToken(
                 new SecurityPrincipal(42L, "student", Set.of(Role.STUDENT)), "n/a"));
     }
@@ -107,6 +120,179 @@ class TutorRecommendationServiceTest {
         assertEquals(1, result.size());
         assertEquals(4L, result.get(0).problem().problemId());
     }
+
+    @Test
+    void activeWeakProfilePrioritizesMatchingTag() {
+        ProblemEntity unrelated = problem(6L, "Unrelated");
+        ProblemEntity prefixSum = problem(7L, "Prefix Sum");
+
+        when(submissionMapper.selectList(any()))
+                .thenReturn(List.of());
+
+        when(problemMapper.selectList(any()))
+                .thenReturn(List.of(unrelated, prefixSum));
+
+        when(problemCatalog.tagsOf(unrelated))
+                .thenReturn(List.of("图论"));
+
+        when(problemCatalog.tagsOf(prefixSum))
+                .thenReturn(List.of("前缀和"));
+
+        when(profileRecommendationClient.fetch(any(), anyInt()))
+                .thenReturn(List.of(
+                        new AiRecommendationProfileSignal(
+                                "前缀和",
+                                "weakness",
+                                "NEGATIVE",
+                                1.0,
+                                2
+                        )
+                ));
+
+        when(problemCatalog.toTutorResponse(prefixSum))
+                .thenReturn(tutorProblem(7L));
+
+        var result = service.recommend(1);
+
+        assertEquals(1, result.size());
+        assertEquals(7L, result.get(0).problem().problemId());
+        assertTrue(result.get(0).reason().contains("前缀和"));
+    }
+
+    @Test
+        void errorProfileMatchesChineseKnowledgeTag() {
+        ProblemEntity binarySearch = problem(8L, "Binary Search");
+
+        when(submissionMapper.selectList(any()))
+                .thenReturn(List.of());
+
+        when(problemMapper.selectList(any()))
+                .thenReturn(List.of(binarySearch));
+
+        when(problemCatalog.tagsOf(binarySearch))
+                .thenReturn(List.of("二分查找"));
+
+        when(profileRecommendationClient.fetch(any(), anyInt()))
+                .thenReturn(List.of(
+                        new AiRecommendationProfileSignal(
+                                "wrong_answer_binary_search",
+                                "weakness",
+                                "NEGATIVE",
+                                0.8,
+                                2
+                        )
+                ));
+
+        when(problemCatalog.toTutorResponse(binarySearch))
+                .thenReturn(tutorProblem(8L));
+
+        var result = service.recommend(1);
+
+        assertEquals(1, result.size());
+        assertTrue(result.get(0).reason().contains("根据你的学习画像"));
+        assertTrue(result.get(0).reason().contains("二分查找"));
+        }
+
+        @Test
+        void errorProfileMatchesDpAlias() {
+        ProblemEntity dynamicProgramming = problem(9L, "DP Problem");
+
+        when(submissionMapper.selectList(any()))
+                .thenReturn(List.of());
+
+        when(problemMapper.selectList(any()))
+                .thenReturn(List.of(dynamicProgramming));
+
+        when(problemCatalog.tagsOf(dynamicProgramming))
+                .thenReturn(List.of("DP"));
+
+        when(profileRecommendationClient.fetch(any(), anyInt()))
+                .thenReturn(List.of(
+                        new AiRecommendationProfileSignal(
+                                "wrong_answer_dynamic_programming",
+                                "weakness",
+                                "NEGATIVE",
+                                0.8,
+                                2
+                        )
+                ));
+
+        when(problemCatalog.toTutorResponse(dynamicProgramming))
+                .thenReturn(tutorProblem(9L));
+
+        var result = service.recommend(1);
+
+        assertEquals(1, result.size());
+        assertTrue(result.get(0).reason().contains("根据你的学习画像"));
+        assertTrue(result.get(0).reason().contains("DP"));
+        }
+
+        @Test
+        void genericErrorProfileDoesNotMatchAsKnowledgeTopic() {
+        ProblemEntity implementation = problem(10L, "Basic Implementation");
+
+        when(submissionMapper.selectList(any()))
+                .thenReturn(List.of());
+
+        when(problemMapper.selectList(any()))
+                .thenReturn(List.of(implementation));
+
+        when(problemCatalog.tagsOf(implementation))
+                .thenReturn(List.of("基础实现"));
+
+        when(profileRecommendationClient.fetch(any(), anyInt()))
+                .thenReturn(List.of(
+                        new AiRecommendationProfileSignal(
+                                "wrong_answer_basic_implementation",
+                                "weakness",
+                                "NEGATIVE",
+                                0.8,
+                                2
+                        )
+                ));
+
+        when(problemCatalog.toTutorResponse(implementation))
+                .thenReturn(tutorProblem(10L));
+
+        var result = service.recommend(1);
+
+        assertEquals(1, result.size());
+        assertTrue(!result.get(0).reason().contains("根据你的学习画像"));
+        }
+
+        @Test
+        void pureCanonicalProfileMatchesUnknownTopic() {
+        ProblemEntity segmentTree = problem(11L, "Segment Tree");
+
+        when(submissionMapper.selectList(any()))
+                .thenReturn(List.of());
+
+        when(problemMapper.selectList(any()))
+                .thenReturn(List.of(segmentTree));
+
+        when(problemCatalog.tagsOf(segmentTree))
+                .thenReturn(List.of("segment_tree"));
+
+        when(profileRecommendationClient.fetch(any(), anyInt()))
+                .thenReturn(List.of(
+                        new AiRecommendationProfileSignal(
+                                "segment_tree",
+                                "weakness",
+                                "NEGATIVE",
+                                0.8,
+                                2
+                        )
+                ));
+
+        when(problemCatalog.toTutorResponse(segmentTree))
+                .thenReturn(tutorProblem(11L));
+
+        var result = service.recommend(1);
+
+        assertEquals(1, result.size());
+        assertEquals(11L, result.get(0).problem().problemId());
+        assertTrue(result.get(0).reason().contains("segment_tree"));
+        }
 
     @Test
     void coldStartUsesDifficultyGradient() {

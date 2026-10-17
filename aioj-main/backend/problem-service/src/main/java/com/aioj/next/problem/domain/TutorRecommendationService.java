@@ -13,6 +13,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.springframework.stereotype.Service;
 import com.aioj.next.contract.problem.Difficulty;
 import java.util.HashSet;
+import com.aioj.next.contract.ai.AiRecommendationProfileSignal;
+import java.util.Locale;
 
 import java.math.BigDecimal;
 import java.util.ArrayList;
@@ -32,17 +34,106 @@ public class TutorRecommendationService {
         SubmissionStatus.TIME_LIMIT_EXCEEDED,
         SubmissionStatus.MEMORY_LIMIT_EXCEEDED,
         SubmissionStatus.OUTPUT_LIMIT_EXCEEDED
-);
+    );
+
+    private static final List<String> PROFILE_STATUS_PREFIXES = List.of(
+            "wrong_answer",
+            "runtime_error",
+            "time_limit_exceeded",
+            "memory_limit_exceeded",
+            "output_limit_exceeded",
+            "compile_error"
+    );
+
+    private static final Map<String, String> KNOWLEDGE_ALIASES = Map.ofEntries(
+            Map.entry("数组", "array"),
+            Map.entry("array", "array"),
+
+            Map.entry("字符串", "string"),
+            Map.entry("string", "string"),
+
+            Map.entry("前缀和", "prefix_sum"),
+            Map.entry("prefix_sum", "prefix_sum"),
+            Map.entry("prefix_sums", "prefix_sum"),
+
+            Map.entry("差分", "difference_array"),
+            Map.entry("difference_array", "difference_array"),
+
+            Map.entry("二分", "binary_search"),
+            Map.entry("二分查找", "binary_search"),
+            Map.entry("二分答案", "binary_search"),
+            Map.entry("binary_search", "binary_search"),
+            Map.entry("binary_search_boundary", "binary_search"),
+            Map.entry("binary_search_monotonicity", "binary_search"),
+
+            Map.entry("双指针", "two_pointers"),
+            Map.entry("two_pointer", "two_pointers"),
+            Map.entry("two_pointers", "two_pointers"),
+
+            Map.entry("滑动窗口", "sliding_window"),
+            Map.entry("sliding_window", "sliding_window"),
+
+            Map.entry("贪心", "greedy"),
+            Map.entry("greedy", "greedy"),
+
+            Map.entry("动态规划", "dynamic_programming"),
+            Map.entry("dp", "dynamic_programming"),
+            Map.entry("dynamic_programming", "dynamic_programming"),
+            Map.entry("state_machine_dp", "dynamic_programming"),
+            Map.entry("状态机_dp", "dynamic_programming"),
+
+            Map.entry("图", "graph"),
+            Map.entry("图论", "graph"),
+            Map.entry("graph", "graph"),
+            Map.entry("graph_theory", "graph"),
+
+            Map.entry("dfs", "dfs"),
+            Map.entry("depth_first_search", "dfs"),
+            Map.entry("深度优先搜索", "dfs"),
+
+            Map.entry("bfs", "bfs"),
+            Map.entry("breadth_first_search", "bfs"),
+            Map.entry("bfs_shortest_path", "bfs"),
+            Map.entry("广度优先搜索", "bfs"),
+
+            Map.entry("并查集", "union_find"),
+            Map.entry("union_find", "union_find"),
+            Map.entry("disjoint_set", "union_find"),
+
+            Map.entry("最短路", "shortest_path"),
+            Map.entry("shortest_path", "shortest_path"),
+
+            Map.entry("拓扑排序", "topological_sort"),
+            Map.entry("topological_sort", "topological_sort"),
+
+            Map.entry("树", "tree"),
+            Map.entry("tree", "tree"),
+
+            Map.entry("数学", "math"),
+            Map.entry("math", "math"),
+
+            Map.entry("模拟", "simulation"),
+            Map.entry("simulation", "simulation"),
+
+            Map.entry("排序", "sorting"),
+            Map.entry("sorting", "sorting")
+    );
 
     private final ProblemMapper problemMapper;
     private final SubmissionMapper submissionMapper;
     private final ProblemCatalog problemCatalog;
+    private final AiProfileRecommendationClient profileRecommendationClient;
 
-    public TutorRecommendationService(ProblemMapper problemMapper, SubmissionMapper submissionMapper,
-                                      ProblemCatalog problemCatalog) {
+    public TutorRecommendationService(
+            ProblemMapper problemMapper,
+            SubmissionMapper submissionMapper,
+            ProblemCatalog problemCatalog,
+            AiProfileRecommendationClient profileRecommendationClient
+    ) {
         this.problemMapper = problemMapper;
         this.submissionMapper = submissionMapper;
         this.problemCatalog = problemCatalog;
+        this.profileRecommendationClient = profileRecommendationClient;
     }
 
     public List<TutorRecommendationResponse> recommend(Integer requestedLimit) {
@@ -75,6 +166,12 @@ public class TutorRecommendationService {
             }
         }
 
+        List<AiRecommendationProfileSignal> profileSignals =
+        profileRecommendationClient.fetch(userId, 20);
+
+        Map<String, Double> profileWeaknessScores =
+                profileWeaknessScores(profileSignals);
+
         List<ProblemEntity> publicProblems = problemMapper.selectList(new LambdaQueryWrapper<ProblemEntity>()
                 .eq(ProblemEntity::getDeleted, false)
                 .isNull(ProblemEntity::getDeletedAt)
@@ -98,30 +195,43 @@ public class TutorRecommendationService {
         List<ScoredProblem> ranked = new ArrayList<>();
         for (ProblemEntity problem : publicProblems) {
             ProblemHistory item = history.get(problem.getId());
+
             if (item != null && item.accepted) {
                 continue;
             }
-            List<String> matchingTags = problemCatalog.tagsOf(problem).stream()
-                .map(String::trim)
-                .filter(tag -> !tag.isEmpty())
-                .filter(weakTagScores::containsKey)
-                .toList();
+
+            List<String> problemTags = problemCatalog.tagsOf(problem);
+
+            List<String> matchingTags = problemTags.stream()
+                    .map(String::trim)
+                    .filter(tag -> !tag.isEmpty())
+                    .filter(weakTagScores::containsKey)
+                    .toList();
 
             int tagScore = matchingTags.stream()
                     .mapToInt(tag -> Math.min(weakTagScores.get(tag), 5))
                     .sum() * 10;
+
+            ProfileMatch profileMatch =
+                    matchProfileTags(problemTags, profileWeaknessScores);
 
             double score = (item == null
                     ? 100.0
                     : 70.0
                             - Math.min(item.attempts, 10) * 3.0
                             + Math.min(item.failureCount, 5) * 2.0)
-                    + tagScore;
+                    + tagScore
+                    + profileMatch.score() * 20.0;
+
             String reason;
-            if (item != null && item.failureCount > 0) {
+            if (profileMatch.tag() != null) {
+                reason = "根据你的学习画像，优先练习「"
+                        + profileMatch.tag() + "」相关题目";
+            } else if (item != null && item.failureCount > 0) {
                 reason = "曾提交但尚未通过，适合针对性复习";
             } else if (!matchingTags.isEmpty()) {
-                reason = "你最近在「" + matchingTags.get(0) + "」知识点上有未通过记录";
+                reason = "你最近在「" + matchingTags.get(0)
+                        + "」知识点上有未通过记录";
             } else {
                 reason = "尚未提交过，适合作为新的练习题";
             }
@@ -189,6 +299,135 @@ public class TutorRecommendationService {
             return DEFAULT_LIMIT;
         }
         return Math.min(requestedLimit, MAX_LIMIT);
+    }
+
+    private Map<String, Double> profileWeaknessScores(
+            List<AiRecommendationProfileSignal> signals
+    ) {
+        Map<String, Double> scores = new HashMap<>();
+
+        for (AiRecommendationProfileSignal signal : signals) {
+            if (signal == null
+                    || !"weakness".equalsIgnoreCase(signal.category())
+                    || !"NEGATIVE".equalsIgnoreCase(signal.polarity())) {
+                continue;
+            }
+
+            String key = profileTopicKey(signal.profileKey());
+            if (key.isBlank()) {
+                continue;
+            }
+
+            double confidence = signal.confidence() == null
+                    ? 0.5
+                    : Math.max(0.0, Math.min(1.0, signal.confidence()));
+
+            int evidenceCount = signal.evidenceCount() == null
+                    ? 1
+                    : Math.max(1, Math.min(signal.evidenceCount(), 5));
+
+            scores.merge(
+                    key,
+                    confidence * evidenceCount,
+                    Double::sum
+            );
+        }
+
+        return scores;
+    }
+
+    private ProfileMatch matchProfileTags(
+            List<String> problemTags,
+            Map<String, Double> profileScores
+    ) {
+        double score = 0.0;
+        String matchedTag = null;
+
+        for (String rawTag : problemTags) {
+            String tagKey = canonicalKnowledgeKeyOrSelf(rawTag);
+            if (tagKey.isBlank()) {
+                continue;
+            }
+
+            Double matchedScore = profileScores.get(tagKey);
+            if (matchedScore == null) {
+                continue;
+            }
+
+            score += matchedScore;
+            if (matchedTag == null) {
+                matchedTag = rawTag.trim();
+            }
+        }
+
+        return new ProfileMatch(score, matchedTag);
+    }
+
+    private String normalizeKnowledgeKey(String value) {
+        if (value == null || value.isBlank()) {
+            return "";
+        }
+
+        return value.trim()
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("[^a-z0-9_\\u4e00-\\u9fa5]+", "_")
+                .replaceAll("_+", "_")
+                .replaceAll("^_|_$", "");
+    }
+
+    private String profileTopicKey(String profileKey) {
+        String normalized = normalizeKnowledgeKey(profileKey);
+        if (normalized.isBlank()) {
+            return "";
+        }
+
+        for (String prefix : PROFILE_STATUS_PREFIXES) {
+            if (normalized.equals(prefix)) {
+                return "";
+            }
+
+            String prefixWithSeparator = prefix + "_";
+            if (normalized.startsWith(prefixWithSeparator)) {
+                String subject = normalized.substring(prefixWithSeparator.length());
+                return canonicalKnowledgeKey(subject);
+            }
+        }
+
+        return canonicalKnowledgeKeyOrSelf(normalized);
+    }
+
+    private String canonicalKnowledgeKey(String value) {
+        String normalized = normalizeKnowledgeKey(value);
+        if (normalized.isBlank()) {
+            return "";
+        }
+
+        String canonical = KNOWLEDGE_ALIASES.get(normalized);
+        if (canonical != null) {
+            return canonical;
+        }
+
+        // 支持 binary_search_boundary、dynamic_programming_state 等扩展主题。
+        for (Map.Entry<String, String> entry : KNOWLEDGE_ALIASES.entrySet()) {
+            if (normalized.startsWith(entry.getKey() + "_")) {
+                return entry.getValue();
+            }
+        }
+
+        return "";
+    }
+
+    private String canonicalKnowledgeKeyOrSelf(String value) {
+            String normalized = normalizeKnowledgeKey(value);
+            if (normalized.isBlank()) {
+                return "";
+            }
+
+            String canonical = canonicalKnowledgeKey(normalized);
+            return canonical.isBlank() ? normalized : canonical;
+        }
+
+    private record ProfileMatch(double score, String tag) {
     }
 
     private static final class ProblemHistory {
