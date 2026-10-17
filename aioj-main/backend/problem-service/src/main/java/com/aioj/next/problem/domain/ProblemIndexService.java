@@ -14,6 +14,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
+import com.aioj.next.contract.ai.AiEmbeddingResponse;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
@@ -24,7 +25,9 @@ import java.util.List;
 @Service
 public class ProblemIndexService {
     private static final String PENDING = "PENDING";
+    private static final String READY = "READY";
     private static final String FAILED = "FAILED";
+    private static final int EMBEDDING_BATCH_SIZE = 10;
     private static final Logger log = LoggerFactory.getLogger(ProblemIndexService.class);
 
     private static final TypeReference<List<String>> STRING_LIST = new TypeReference<>() {
@@ -33,13 +36,16 @@ public class ProblemIndexService {
     private final ProblemMapper problemMapper;
     private final ProblemIndexChunkMapper indexChunkMapper;
     private final ObjectMapper objectMapper;
+    private final ProblemEmbeddingClient embeddingClient;
 
     public ProblemIndexService(ProblemMapper problemMapper,
                                ProblemIndexChunkMapper indexChunkMapper,
-                               ObjectMapper objectMapper) {
+                               ObjectMapper objectMapper,
+                               ProblemEmbeddingClient embeddingClient) {
         this.problemMapper = problemMapper;
         this.indexChunkMapper = indexChunkMapper;
         this.objectMapper = objectMapper;
+        this.embeddingClient = embeddingClient;
     }
 
     @Transactional
@@ -104,39 +110,98 @@ public class ProblemIndexService {
     }
 
     @Scheduled(
-            initialDelayString = "${AIOJ_PROBLEM_INDEX_INITIAL_DELAY_MS:60000}",
-            fixedDelayString = "${AIOJ_PROBLEM_INDEX_FIXED_DELAY_MS:300000}"
+                initialDelayString = "${AIOJ_PROBLEM_INDEX_INITIAL_DELAY_MS:60000}",
+                fixedDelayString = "${AIOJ_PROBLEM_INDEX_FIXED_DELAY_MS:300000}"
+        )
+        public void syncPublicProblems() {
+            List<ProblemEntity> problems;
+
+            try {
+                problems = problemMapper.selectList(new LambdaQueryWrapper<ProblemEntity>()
+                        .eq(ProblemEntity::getDeleted, false)
+                        .isNull(ProblemEntity::getDeletedAt)
+                        .isNull(ProblemEntity::getArchivedAt)
+                        .eq(ProblemEntity::getVisibility, ProblemVisibility.PUBLIC));
+            } catch (RuntimeException ex) {
+                log.error("Unable to load public problems for indexing", ex);
+                return;
+            }
+
+            int changed = 0;
+            int failed = 0;
+
+            for (ProblemEntity problem : problems) {
+                try {
+                    if (indexPublicProblem(problem.getId())) {
+                        changed++;
+                    }
+                } catch (RuntimeException ex) {
+                    failed++;
+                    log.warn("Failed to index problem {}", problem.getId(), ex);
+                }
+            }
+
+            log.info("Problem index sync finished: total={}, changed={}, failed={}",
+                    problems.size(), changed, failed);
+        }
+
+        @Scheduled(
+            initialDelayString = "${AIOJ_PROBLEM_EMBEDDING_INITIAL_DELAY_MS:90000}",
+            fixedDelayString = "${AIOJ_PROBLEM_EMBEDDING_FIXED_DELAY_MS:300000}"
     )
-    public void syncPublicProblems() {
-        List<ProblemEntity> problems;
+    public void syncPendingEmbeddings() {
+        List<ProblemIndexChunkEntity> pending;
 
         try {
-            problems = problemMapper.selectList(new LambdaQueryWrapper<ProblemEntity>()
-                    .eq(ProblemEntity::getDeleted, false)
-                    .isNull(ProblemEntity::getDeletedAt)
-                    .isNull(ProblemEntity::getArchivedAt)
-                    .eq(ProblemEntity::getVisibility, ProblemVisibility.PUBLIC));
+            pending = indexChunkMapper.selectList(new LambdaQueryWrapper<ProblemIndexChunkEntity>()
+                    .eq(ProblemIndexChunkEntity::getIndexStatus, PENDING)
+                    .orderByAsc(ProblemIndexChunkEntity::getUpdatedAt)
+                    .last("LIMIT " + EMBEDDING_BATCH_SIZE));
         } catch (RuntimeException ex) {
-            log.error("Unable to load public problems for indexing", ex);
+            log.error("Unable to load pending problem embeddings", ex);
             return;
         }
 
-        int changed = 0;
+        int indexed = 0;
         int failed = 0;
 
-        for (ProblemEntity problem : problems) {
+        for (ProblemIndexChunkEntity chunk : pending) {
             try {
-                if (indexPublicProblem(problem.getId())) {
-                    changed++;
+                var result = embeddingClient.embed(chunk.getSearchText());
+
+                if (result.isEmpty()) {
+                    markEmbeddingFailed(chunk, "Embedding provider unavailable");
+                    failed++;
+                    continue;
                 }
-            } catch (RuntimeException ex) {
+
+                AiEmbeddingResponse embedding = result.get();
+                Instant now = Instant.now();
+
+                chunk.setEmbeddingModel(embedding.model());
+                chunk.setEmbeddingDimension(embedding.dimension());
+                chunk.setEmbeddingJson(
+                        objectMapper.writeValueAsString(embedding.embedding())
+                );
+                chunk.setIndexStatus(READY);
+                chunk.setIndexedAt(now);
+                chunk.setLastError(null);
+                chunk.setUpdatedAt(now);
+
+                indexChunkMapper.updateById(chunk);
+                indexed++;
+            } catch (Exception ex) {
+                markEmbeddingFailed(chunk, summarizeEmbeddingError(ex));
                 failed++;
-                log.warn("Failed to index problem {}", problem.getId(), ex);
+                log.warn("Failed to generate embedding for problem {}",
+                        chunk.getProblemId(), ex);
             }
         }
 
-        log.info("Problem index sync finished: total={}, changed={}, failed={}",
-                problems.size(), changed, failed);
+        log.info(
+                "Problem embedding sync finished: total={}, indexed={}, failed={}",
+                pending.size(), indexed, failed
+        );
     }
 
     public String buildSearchText(ProblemEntity problem) {
@@ -151,6 +216,25 @@ public class ProblemIndexService {
         appendField(text, "补充说明", problem.getNotes());
 
         return text.toString();
+    }
+
+    private void markEmbeddingFailed(ProblemIndexChunkEntity chunk, String message) {
+        chunk.setIndexStatus(FAILED);
+        chunk.setLastError(message);
+        chunk.setUpdatedAt(Instant.now());
+        indexChunkMapper.updateById(chunk);
+    }
+
+    private String summarizeEmbeddingError(Exception ex) {
+            String message = ex.getMessage();
+
+            if (message == null || message.isBlank()) {
+                message = ex.getClass().getSimpleName();
+            }
+
+            return message.length() <= 1000
+                    ? message
+                    : message.substring(0, 1000);
     }
 
     private String parseTags(String rawTags) {

@@ -7,22 +7,29 @@ import com.aioj.next.contract.problem.TutorProblemCapabilitiesResponse;
 import com.aioj.next.contract.problem.TutorProblemResponse;
 import com.aioj.next.contract.problem.TutorRecommendationResponse;
 import com.aioj.next.problem.domain.ProblemCatalog;
+import com.aioj.next.problem.domain.ProblemSemanticSearchService;
 import com.aioj.next.problem.domain.TutorRecommendationService;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import com.aioj.next.contract.problem.ProblemSemanticSearchResponse;
 
 @RestController
 @RequestMapping("/tutor")
 public class TutorProblemController {
     private final ProblemCatalog problemCatalog;
     private final TutorRecommendationService recommendationService;
+    private final ProblemSemanticSearchService semanticSearchService;
 
-    public TutorProblemController(ProblemCatalog problemCatalog, TutorRecommendationService recommendationService) {
+    public TutorProblemController(
+            ProblemCatalog problemCatalog,
+            TutorRecommendationService recommendationService,
+            ProblemSemanticSearchService semanticSearchService) {
         this.problemCatalog = problemCatalog;
         this.recommendationService = recommendationService;
+        this.semanticSearchService = semanticSearchService;
     }
 
     @GetMapping("/capabilities")
@@ -50,5 +57,12 @@ public class TutorProblemController {
     public ApiResponse<java.util.List<TutorRecommendationResponse>> recommendations(
             @RequestParam(required = false) Integer limit) {
         return ApiResponse.ok(recommendationService.recommend(limit));
+    }
+
+    @GetMapping("/problems/semantic-search")
+    public ApiResponse<ProblemSemanticSearchResponse> semanticSearch(
+            @RequestParam String query,
+            @RequestParam(required = false) Integer limit) {
+        return ApiResponse.ok(semanticSearchService.search(query, limit));
     }
 }

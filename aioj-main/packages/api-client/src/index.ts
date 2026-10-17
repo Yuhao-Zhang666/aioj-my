@@ -563,6 +563,16 @@ export interface TutorRecommendationResponse {
   reason: string;
 }
 
+export interface ProblemSemanticSearchRecord {
+  problem: TutorProblemResponse;
+  score: number;
+}
+
+export interface ProblemSemanticSearchResponse {
+  records: ProblemSemanticSearchRecord[];
+  fallback: boolean;
+}
+
 export interface ContestParticipantResponse {
   id: EntityId;
   contestId: EntityId;
@@ -3534,6 +3544,10 @@ export const api = {
   tutorRecommendations: (params: { limit?: number } = {}) =>
     request<TutorRecommendationResponse[]>(
       `/api/v1/tutor/recommendations${queryString(params)}`
+    ),
+  tutorSemanticSearch: (params: { query: string; limit?: number }) =>
+    request<ProblemSemanticSearchResponse>(
+      `/api/v1/tutor/problems/semantic-search${queryString(params)}`
     ),
   problems: (params: ProblemListParams = {}) =>
     request<PageResponse<ProblemResponse>>(`/api/v1/problems${queryString({ page: 1, pageSize: 20, ...params })}`),
