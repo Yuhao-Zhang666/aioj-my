@@ -121,14 +121,14 @@ public class TutorRecommendationService {
             Map.entry("arrays", "array"),
 
             Map.entry("deque", "deque"),
-            Map.entry("dijkstra", "dijkstra"),
-            Map.entry("gcd", "gcd"),
+            Map.entry("dijkstra", "shortest_path"),
+            Map.entry("gcd", "math"),
             Map.entry("kmp", "kmp"),
-            Map.entry("layered_graph", "layered_graph"),
-            Map.entry("lower_bound", "lower_bound"),
+            Map.entry("layered_graph", "graph"),
+            Map.entry("lower_bound", "binary_search"),
             Map.entry("misere", "misere"),
             Map.entry("nim", "nim"),
-            Map.entry("upper_bound", "upper_bound"),
+            Map.entry("upper_bound", "binary_search"),
 
             Map.entry("inversion_count", "inversion_count"),
             Map.entry("tsp_state_compression", "tsp_state_compression")
