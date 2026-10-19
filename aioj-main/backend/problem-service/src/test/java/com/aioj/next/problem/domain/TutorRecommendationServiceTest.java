@@ -406,6 +406,40 @@ class TutorRecommendationServiceTest {
         );
     }
 
+    @Test
+        void binarySearchProfileMatchesLowerBoundTag() {
+        ProblemEntity lowerBound = problem(14L, "Lower Bound");
+
+        when(submissionMapper.selectList(any()))
+                .thenReturn(List.of());
+
+        when(problemMapper.selectList(any()))
+                .thenReturn(List.of(lowerBound));
+
+        when(problemCatalog.tagsOf(lowerBound))
+                .thenReturn(List.of("lower_bound"));
+
+        when(profileRecommendationClient.fetch(any(), anyInt()))
+                .thenReturn(List.of(
+                        new AiRecommendationProfileSignal(
+                                "wrong_answer_binary_search",
+                                "weakness",
+                                "NEGATIVE",
+                                0.8,
+                                2
+                        )
+                ));
+
+        when(problemCatalog.toTutorResponse(lowerBound))
+                .thenReturn(tutorProblem(14L));
+
+        var result = service.recommend(1);
+
+        assertEquals(1, result.size());
+        assertEquals(14L, result.get(0).problem().problemId());
+        assertTrue(result.get(0).reason().contains("lower_bound"));
+        }
+
     private TutorProblemResponse tutorProblem(ProblemEntity problem) {
         return new TutorProblemResponse(
                 problem.getId(),
